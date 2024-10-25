@@ -1,131 +1,141 @@
-import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
 import requests
-import os
 import sqlite3
-import time
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, WebAppInfo
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from flask import Flask, render_template, request
 
-# Завантаження змінних середовища
-load_dotenv()
+# Твій токен
+TOKEN = '8086724081:AAGbEy9hKGtLbG708BCsqMbD-B_yp15s7Dc'
 
-# Установка логування
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Ваш API токен від BotFather
-TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
-
-# Збереження ключових слів у базі даних
-conn = sqlite3.connect('/tmp/keywords.db', check_same_thread=False)
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS keywords (keyword TEXT UNIQUE)''')
+# Створення бази даних
+conn = sqlite3.connect('keywords.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS keywords (
+    user_id INTEGER,
+    keyword TEXT
+)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS favorites (
+    user_id INTEGER,
+    news_title TEXT,
+    news_url TEXT,
+    summary TEXT
+)''')
 conn.commit()
 
-# Flask додаток для Web App
-app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY")  # Додай секретний ключ для захисту сесій
-
-@app.route('/')
-def home():
-    keywords = get_keywords()
-    return render_template('index.html', keywords=keywords)
-
-@app.route('/add_keyword', methods=['POST'])
-def add_keyword_web():
-    keyword = request.form['keyword']
-    try:
-        c.execute('INSERT INTO keywords (keyword) VALUES (?)', (keyword,))
+# Додавання ключового слова
+async def add_keyword(update: Update, context: CallbackContext) -> None:
+    keyword = ' '.join(context.args)
+    user_id = update.message.from_user.id
+    if keyword:
+        cursor.execute('INSERT INTO keywords (user_id, keyword) VALUES (?, ?)', (user_id, keyword))
         conn.commit()
-        return 'Ключове слово додано!', 200
-    except sqlite3.IntegrityError:
-        return 'Ключове слово вже існує!', 400
+        await update.message.reply_text(f"Ключове слово '{keyword}' додано.")
+    else:
+        await update.message.reply_text("Будь ласка, вкажи ключове слово після команди /add_keyword.")
 
-@app.route('/remove_keyword', methods=['POST'])
-def remove_keyword_web():
-    keyword = request.form['keyword']
-    c.execute('DELETE FROM keywords WHERE keyword = ?', (keyword,))
+# Перегляд ключових слів
+async def list_keywords(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.from_user.id
+    cursor.execute('SELECT keyword FROM keywords WHERE user_id = ?', (user_id,))
+    keywords = cursor.fetchall()
+    if keywords:
+        message = "Твої ключові слова:\n" + '\n'.join([kw[0] for kw in keywords])
+    else:
+        message = "Наразі у тебе немає доданих ключових слів."
+    await update.message.reply_text(message)
+
+# Видалення ключового слова
+async def remove_keyword(update: Update, context: CallbackContext) -> None:
+    keyword = ' '.join(context.args)
+    user_id = update.message.from_user.id
+    cursor.execute('DELETE FROM keywords WHERE user_id = ? AND keyword = ?', (user_id, keyword))
     conn.commit()
-    return 'Ключове слово видалено!', 200
+    await update.message.reply_text(f"Ключове слово '{keyword}' видалено.")
 
-@app.route('/search', methods=['GET'])
-def search_news_web():
-    keyword = request.args.get('keyword')
-    articles = search_news(keyword)
-    return {'articles': articles}, 200
+# Функція для старту бота
+async def start(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text("Привіт! Я допоможу тобі моніторити новини. Використовуй команди:\n"
+                                    "/add_keyword - додати ключове слово\n"
+                                    "/list_keywords - переглянути ключові слова\n"
+                                    "/remove_keyword - видалити ключове слово")
 
-# Функція для отримання ключових слів з бази даних
-def get_keywords():
-    c.execute('SELECT keyword FROM keywords')
-    return [row[0] for row in c.fetchall()]
+# Функція для відправки улюблених новин
+async def list_favorites(update: Update, context: CallbackContext) -> None:
+    user_id = update.message.from_user.id
+    cursor.execute('SELECT news_title, news_url FROM favorites WHERE user_id = ?', (user_id,))
+    favorites = cursor.fetchall()
+    if favorites:
+        message = "Твої обрані новини:\n" + '\n'.join([f"{fav[0]}: {fav[1]}" for fav in favorites])
+    else:
+        message = "Наразі у тебе немає обраних новин."
+    await update.message.reply_text(message)
 
-# Функція старту для запуску бота
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    web_app = WebAppInfo(url=os.getenv("web-production-6c7bf.up.railway.app"))  # Заміни на свій URL
-    keyboard = [[InlineKeyboardButton("Відкрити Web App", web_app=web_app)]]
+# Налаштування бота
+def main() -> None:
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add_keyword", add_keyword))
+    app.add_handler(CommandHandler("list_keywords", list_keywords))
+    app.add_handler(CommandHandler("remove_keyword", remove_keyword))
+    app.add_handler(CommandHandler("favorites", list_favorites))
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
+NEWS_API_KEY = 'your_news_api_key'  # Встав сюди API ключ для NewsAPI
+
+def fetch_news(keyword: str) -> list:
+    url = f"https://newsapi.org/v2/everything?q={keyword}&apiKey={NEWS_API_KEY}&language=uk"
+    response = requests.get(url)
+    data = response.json()
+    articles = data.get('articles', [])
+    return [
+        {
+            'title': article['title'],
+            'url': article['url'],
+            'summary': article['description'],
+            'image': article['urlToImage']
+        }
+        for article in articles[:3]  # Беремо лише перші три статті для прикладу
+    ]
+import schedule
+import time
+from threading import Thread
+
+async def check_news() -> None:
+    cursor.execute('SELECT DISTINCT user_id, keyword FROM keywords')
+    user_keywords = cursor.fetchall()
+    for user_id, keyword in user_keywords:
+        news = fetch_news(keyword)
+        for article in news:
+            message = f"{article['title']}\n{article['summary']}\n{article['url']}"
+            context.bot.send_message(chat_id=user_id, text=message)
+
+def run_scheduler():
+    schedule.every(10).minutes.do(lambda: asyncio.run(check_news()))  # Перевірка кожні 10 хвилин
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Запуск планувальника в окремому потоці
+Thread(target=run_scheduler, daemon=True).start()
+async def send_news(update: Update, context: CallbackContext, news):
+    keyboard = [
+        [InlineKeyboardButton("Додати в обрані", callback_data=f"fav_{news['title']}_{news['url']}")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        'Привіт! Я допоможу тобі моніторити новини. Дай мені ключові слова, щоб почати! Використовуй Web App для керування ключовими словами та пошуку новин.',
+        f"{news['title']}\n{news['summary']}\n{news['url']}",
         reply_markup=reply_markup
     )
 
-# Функція для пошуку новин
-# Ключові слова надаються через команду /search keyword
-# Бот шукатиме новини та надсилатиме зведення з лінком
-def search_news(keyword):
-    url = f'https://news.google.com/search?q={keyword}'  # приклад, де використовуємо пошук Google News
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    articles = []
-
-    for item in soup.find_all('h3')[:5]:  # знайдемо перші 5 новинних заголовків
-        title = item.get_text()
-        link = item.a['href']
-        if link.startswith('/'):
-            link = f'https://news.google.com{link}'
-        articles.append((title, link))
-    
-    return articles
-
-# Автоматичний моніторинг новин
-async def periodic_search(context: ContextTypes.DEFAULT_TYPE) -> None:
-    keywords = get_keywords()
-    if not keywords:
-        return
-
-    for keyword in keywords:
-        articles = search_news(keyword)
-        if articles:
-            chat_id = context.job.chat_id
-            await context.bot.send_message(chat_id=chat_id, text=f'*Результати для ключового слова:* "{keyword}":', parse_mode=ParseMode.MARKDOWN)
-            for title, link in articles:
-                await context.bot.send_message(chat_id=chat_id, text=f'[{title}]({link})', parse_mode=ParseMode.MARKDOWN)
-
-# Основна функція для запуску бота
-async def main():
-    application = ApplicationBuilder().token(TELEGRAM_API_TOKEN).build()
-
-    # Команди бота
-    application.add_handler(CommandHandler("start", start))
-
-    # Планувальник для автоматичного моніторингу новин
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(periodic_search, 'interval', minutes=30, args=[application])
-    scheduler.start()
-
-    # Запуск бота
-    await application.run_polling()
-
-if __name__ == '__main__':
-    import threading
-    import asyncio
-
-    # Запуск Flask додатку в окремому потоці
-    threading.Thread(target=lambda: (time.sleep(2), app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000))))).start()
-
-    # Запуск Telegram бота
-    asyncio.run(main())
+async def button_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data.split('_')
+    if data[0] == 'fav':
+        title = data[1]
+        url = data[2]
+        cursor.execute('INSERT INTO favorites (user_id, news_title, news_url, summary) VALUES (?, ?, ?, ?)', 
+                       (user_id, title, url, ''))
+        conn.commit()
+        await query.answer('Новина додана в обрані.')
