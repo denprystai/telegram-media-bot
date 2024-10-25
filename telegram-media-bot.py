@@ -2,6 +2,7 @@ import logging
 import requests
 import os
 import sqlite3
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, WebAppInfo
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 from bs4 import BeautifulSoup
@@ -17,16 +18,17 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Ваш API токен від BotFather
-TELEGRAM_API_TOKEN = "8086724081:AAGbEy9hKGtLbG708BCsqMbD-B_yp15s7Dc"
+TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
 
 # Збереження ключових слів у базі даних
-conn = sqlite3.connect('keywords.db', check_same_thread=False)
+conn = sqlite3.connect('/tmp/keywords.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS keywords (keyword TEXT UNIQUE)''')
 conn.commit()
 
 # Flask додаток для Web App
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY")  # Додай секретний ключ для захисту сесій
 
 @app.route('/')
 def home():
@@ -63,7 +65,7 @@ def get_keywords():
 
 # Функція старту для запуску бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    web_app = WebAppInfo(url="https://your-server-address")  # Заміни на свій URL
+    web_app = WebAppInfo(url=os.getenv("WEB_APP_URL"))  # Заміни на свій URL
     keyboard = [[InlineKeyboardButton("Відкрити Web App", web_app=web_app)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -74,7 +76,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Функція для пошуку новин
 # Ключові слова надаються через команду /search keyword
 # Бот шукатиме новини та надсилатиме зведення з лінком
-
 def search_news(keyword):
     url = f'https://news.google.com/search?q={keyword}'  # приклад, де використовуємо пошук Google News
     response = requests.get(url)
@@ -124,7 +125,7 @@ if __name__ == '__main__':
     import asyncio
 
     # Запуск Flask додатку в окремому потоці
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000)).start()
+    threading.Thread(target=lambda: (time.sleep(2), app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000))))).start()
 
     # Запуск Telegram бота
     asyncio.run(main())
