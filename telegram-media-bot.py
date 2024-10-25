@@ -65,7 +65,7 @@ def get_keywords():
 
 # Функція старту для запуску бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    web_app = WebAppInfo(url=os.getenv("WEB_APP_URL"))  # Заміни на свій URL
+    web_app = WebAppInfo(url=os.getenv("web-production-6c7bf.up.railway.app"))  # Заміни на свій URL
     keyboard = [[InlineKeyboardButton("Відкрити Web App", web_app=web_app)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
