@@ -1,1 +1,1 @@
-web: web: python your_script_name.py
+web: telegram-media-bot.py
