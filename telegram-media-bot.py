@@ -81,7 +81,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-NEWS_API_KEY = 'your_news_api_key'  # Встав сюди API ключ для NewsAPI
+NEWS_API_KEY = '73ab671c8d4d45f3aac58a057fd0a81a'  # Встав сюди API ключ для NewsAPI
 
 def fetch_news(keyword: str) -> list:
     url = f"https://newsapi.org/v2/everything?q={keyword}&apiKey={NEWS_API_KEY}&language=uk"
